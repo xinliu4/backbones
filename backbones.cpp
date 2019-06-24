@@ -51,6 +51,7 @@ int catalog_steps[100] = {42, 43, 44, 45, 46, 48, 49, 50, 52, 53, 54, 56, 57, 59
 const int count_steps = 100;
 const int final_timestep = 499;
 
+// hdf5 group names
 const H5std_string nodeIndex_name("/forestHalos/nodeIndex");
 const H5std_string descendentIndex_name("/forestHalos/descendentIndex");
 const H5std_string haloTag_name("/forestHalos/haloTag");
@@ -60,8 +61,15 @@ const H5std_string timestep_name("/forestHalos/timestep");
 const H5std_string firstNode_name("/forestIndex/firstNode");
 const H5std_string numberOfNodes_name("/forestIndex/numberOfNodes");
 
+// -------------------------------------------------------------------------
+// -------------------------------------------------------------------------
+
 int main(int argc, char** argv)
 {
+
+    // -------------------------------------------------------
+    // ----------------- prep inputs/outputs -----------------
+
     int hdf5_file_ind = atoi(argv[1]);
 
     MPI_Init( &argc, &argv );
@@ -69,6 +77,7 @@ int main(int argc, char** argv)
     MPI_Comm_rank( MPI_COMM_WORLD, &Rank);
     MPI_Comm_size(MPI_COMM_WORLD, &NRanks);
 
+    // pass out hdf5 files to ranks
     int hdf5_file_edges[subfiles_count+1];
     for(int i=0; i<subfiles_count+1; i++)
     {
@@ -83,6 +92,7 @@ int main(int argc, char** argv)
 
     clock_t begin = clock();
 
+    // decalre output files
     stringstream tmp_string_outfile;
     tmp_string_outfile << "AlphaQ." << hdf5_file_0 << "_" << hdf5_file_final << ".haloTags_c_vpeak_vr200";
     ofstream lightcone_c(tmp_string_outfile.str().c_str());
@@ -93,13 +103,19 @@ int main(int argc, char** argv)
     vector<int64_t> hid_vec;
     map< pair<int, int64_t>, bool > backbone_halos_map;
     pair<int, int64_t> keykey_backbone_halos;
-
     stringstream tmp_string;
+    
+
+    // -------------------------------------------------------
+    // ----------------- build backbones ---------------------
+
+    // loop over each hdf5 file distributed to the current rank
     for(int hdf5_file_no=hdf5_file_0; hdf5_file_no<hdf5_file_final; hdf5_file_no++)
     {
         cout << hdf5_file_no << endl;
         cout << "elapsed time " << double(clock()-begin) / CLOCKS_PER_SEC << " s" << endl;
 
+        // read next file
         tmp_string << "/projects/DarkUniverse_esp/childh/AlphaQ_mergertrees/AlphaQ." << hdf5_file_no << ".hdf5";
         H5std_string file_name(tmp_string.str().c_str());
         H5File f( file_name, H5F_ACC_RDONLY );
@@ -164,6 +180,7 @@ int main(int argc, char** argv)
 
         for(int i=0; i<dims[0]; i++)
         {
+            // extract next tree from current hdf5
             int64_t first_ind = firstNodes[i];
             int64_t last_ind = firstNodes[i] + numberOfNodes[i];
     
@@ -172,6 +189,7 @@ int main(int argc, char** argv)
 
             for(int jj=first_ind; jj<last_ind; jj++)
             {
+                // get all tree members
                 nodeIndex_this.push_back(nodeIndex[jj]);
                 descendentIndex_this.push_back(descendentIndex[jj]);
                 haloTags_this.push_back(haloTags[jj]);
@@ -190,9 +208,12 @@ int main(int argc, char** argv)
                 steps_present.push_back(*iter);
             }
 
+            // -------- build backbone --------
             vector<int64_t> backbone_tags;
             vector<int> backbone_timesteps;
             int64_t backbone_member = -1;
+
+            // find backbone root  at z=0
             for(int j=0; j<timesteps_this.size(); j++)
                 if(timesteps_this[j] == final_timestep) 
                 {
@@ -213,6 +234,7 @@ int main(int argc, char** argv)
                 return 1;
             }
 
+            // populate backbone toward higher redshift
             vector<int64_t> progenitor_indices_this_step;
             vector<int64_t> progenitor_tags_this_step;
             vector<double> progenitor_masses_this_step; 
