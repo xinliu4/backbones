@@ -219,32 +219,42 @@ int main(int argc, char** argv)
                 {
                      if(nodeMasses_this[j] >= min_z0_count_threshold*particlemass)
                      {
+                         // root found at z=0 and passes mass threshold; set backbone_member to it's node index
                          backbone_member = nodeIndex_this[j];
                          backbone_tags.push_back(haloTags_this[j]);
 
                          backbone_timesteps.push_back(timesteps_this[j]);
                          break;
                      }
+                     // root found but doesn't meet mass threshold
                      else backbone_member = -2;
                 }
 
+            // no root found
             if(backbone_member == -1)
             {
                 cout << "root not found" << endl;
                 return 1;
             }
 
+            // ---------------------------------- build backbone ----------------------------------------
+            
             // populate backbone toward higher redshift
             vector<int64_t> progenitor_indices_this_step;
             vector<int64_t> progenitor_tags_this_step;
-            vector<double> progenitor_masses_this_step; 
+            vector<double> progenitor_masses_this_step;
+
+            // if root was found, build backbone
             if(backbone_member > 0)
             {
+                // loop over snapshots backward in time
                 for(int j=steps_present.size()-2; j>=0; j--)
                 {
                     int step = steps_present[j];
                     for(int k=0; k<timesteps_this.size(); k++)
                     {
+                        // if node is at current snapshot, and it's descendant is the backbone_member 
+                        // (root on first iteration), push back info
                         if(timesteps_this[k] == step && descendentIndex_this[k] == backbone_member)
                         {
                             progenitor_indices_this_step.push_back(nodeIndex_this[k]);
@@ -252,6 +262,8 @@ int main(int argc, char** argv)
                             progenitor_masses_this_step.push_back(nodeMasses_this[k]);
                         }  
                     }
+                    
+                    // if tree nodes found at this snapshot, search for most massive and extend backbone
                     if(progenitor_masses_this_step.size() > 0)
                     {
                         double maxmass = 0.;
@@ -264,6 +276,7 @@ int main(int argc, char** argv)
                                 maxmass_ind = k;
                             }
                         }
+                        // found next backbone node, update backbone_member 
                         backbone_member = progenitor_indices_this_step[maxmass_ind];
                         backbone_tags.push_back(progenitor_tags_this_step[maxmass_ind]);
                         backbone_timesteps.push_back(step);
@@ -275,6 +288,9 @@ int main(int argc, char** argv)
                     progenitor_tags_this_step.clear();
                 }
 
+                // --------------------------------------------------------------------------
+
+                // push all backbone node quantities to single vector for this rank
                 for(int j=0; j<backbone_timesteps.size(); j++)
                 {
                     root_index_vec.push_back(backbone_tags[0]);
@@ -295,6 +311,8 @@ int main(int argc, char** argv)
         free(numberOfNodes);
     }
 
+    // ---------------------- All hdf5 files read in; read and match to SOD --------------------------------
+    
     map< pair<int, int64_t>, pair<double, double> > step_map;
     map< pair<int, int64_t>, double > step_map_r200;
     pair<int, int64_t> keykey;
@@ -303,6 +321,8 @@ int main(int argc, char** argv)
     // SOD PROPERTIES FILE
     for(int step_ind=0; step_ind<count_steps; step_ind++)
     {
+
+        //if(1){
         int this_step = catalog_steps[step_ind];
 
         cout << endl << "loading sod properties step " << this_step << endl;
@@ -312,7 +332,8 @@ int main(int argc, char** argv)
         tmp_string.str("");
 
         int NR_H_properties;
-
+        
+        // gio object for mpi_comm_self, each rank reads a copy of the catalog data
         gio::GenericIO haloproperties_reader(MPI_COMM_SELF, haloproperties_gio_file);
         haloproperties_reader.openAndReadHeader(gio::GenericIO::MismatchRedistribute);
         int nRanks = haloproperties_reader.readNRanks();
@@ -322,7 +343,8 @@ int main(int argc, char** argv)
             size_t current_size = haloproperties_reader.readNumElems(j);
             MaxNElem_H_properties = current_size > MaxNElem_H_properties ? current_size : MaxNElem_H_properties;
         }
-
+        
+        // allocate data buffers
         int64_t *fof_halo_tag = new int64_t[ MaxNElem_H_properties ];
         int64_t *fof_halo_count = new int64_t[ MaxNElem_H_properties ];
         int64_t *sod_halo_count = new int64_t[ MaxNElem_H_properties ];
@@ -344,7 +366,8 @@ int main(int argc, char** argv)
         haloproperties_reader.addVariable( "sod_halo_c_acc_mass", sod_halo_c_acc_mass, true );
 
         bool foundflag = false;
-
+        
+        // read the data
         int halos_found = 0;
         cout << "here" << endl;
         for(int j=0; j<nRanks; ++j) {
@@ -352,10 +375,14 @@ int main(int argc, char** argv)
             cout << "Reading:" << current_size << endl;
             haloproperties_reader.readData(j);
             int nhalos = current_size; 
+
+            // loop all halos in this step
             for(int halo=0; halo<nhalos; halo++)
             {
+                // check this halo is above the minimum number of SO particles
                 if(sod_halo_count[halo] >= min_sod_count)
                 {
+                    // make maps for the unique halo tags (keys) and concentrations/radii (vals)
                     keykey = make_pair(this_step, fof_halo_tag[halo]);
                     valval = make_pair(sod_halo_count[halo], sod_halo_cdelta[halo]);
                     step_map.insert(make_pair(keykey, valval));
@@ -379,6 +406,7 @@ int main(int argc, char** argv)
 
         int NR_H_propertybins;
 
+        // gio object for mpi_comm_self, each rank reads a copy of the catalog data
         gio::GenericIO propertybins_reader(MPI_COMM_SELF, halopropertybins_gio_file);
         propertybins_reader.openAndReadHeader(gio::GenericIO::MismatchRedistribute);
         int nRanks_bins = propertybins_reader.readNRanks();
@@ -388,7 +416,8 @@ int main(int argc, char** argv)
             size_t current_size = propertybins_reader.readNumElems(j);
             MaxNElem_H_bins = current_size > MaxNElem_H_bins ? current_size : MaxNElem_H_bins;
         }
-
+        
+        // allocate data buffers
         int64_t *fof_halo_bin_tag = new int64_t[ MaxNElem_H_bins ];
         int32_t *sod_halo_bin = new int32_t[ MaxNElem_H_bins ];
         int32_t *sod_halo_bin_count = new int32_t[ MaxNElem_H_bins ];
@@ -400,12 +429,15 @@ int main(int argc, char** argv)
         propertybins_reader.addVariable( "sod_halo_bin_count", sod_halo_bin_count, true );
         propertybins_reader.addVariable( "sod_halo_bin_mass", sod_halo_bin_mass, true );
         propertybins_reader.addVariable( "sod_halo_bin_radius", sod_halo_bin_radius, true );
-
+        
+        // read the data
         for(int j=0; j<nRanks_bins; ++j) {
             size_t current_size = propertybins_reader.readNumElems(j);
             cout << "Reading:" << current_size << endl;
             propertybins_reader.readData(j);
             int nhalos = current_size / numbins;
+            
+            // loop all halos in this step
             for(int halo=0; halo<nhalos; halo++)
             {
                 int64_t getdata_IDs[numbins];
@@ -413,6 +445,7 @@ int main(int argc, char** argv)
                 float getdata_halo_bin_count[numbins];
                 float getdata_halo_bin_radius[numbins];
 
+                // loop over radial bins for this SO halo
                 for(int bin=0; bin<numbins; bin++)
                 {
                     getdata_IDs[bin] = fof_halo_bin_tag[halo*numbins + bin];
@@ -421,15 +454,18 @@ int main(int argc, char** argv)
                     getdata_halo_bin_radius[bin] = sod_halo_bin_radius[halo*numbins + bin];
                 }
       
+                // make unique bin ID
                 keykey_sod_property_bins=make_pair(this_step, abs(getdata_IDs[0]));
+                
+                // if this halo exists in a backbone
                 if(backbone_halos_map.count(keykey_sod_property_bins) > 0)
                     if(backbone_halos_map[keykey_sod_property_bins] == true)
                     {
                         double this_halo_vpeak, this_halo_vr200, this_halo_rs_encmass;
-
-                        
                         float sod_m200_count, c200;
                         float sod_r200; // fit only shells fully inside r200
+
+                        // check if halo was read from SO catalog above
                         if(step_map.count(keykey_sod_property_bins) > 0)
                         {
                             sod_m200_count = step_map[keykey_sod_property_bins].first;
@@ -451,17 +487,19 @@ int main(int argc, char** argv)
                         for(int i=0; i<numbins; i++) // fill radii
                             enclosedmass_radii[i] = static_cast<double>(getdata_halo_bin_radius[i]);
 
-                        for(int i=0; i<numbins; i++) // fill masses
+                        for(int i=0; i<numbins; i++) // fill masses (make cumulative sum at each bin location)
                         {
                             float encmass_sum = 0;
                             for(int j=0; j<=i; j++)
                                 encmass_sum += getdata_halo_bin_count[j];
                             enclosedmass_masses[i] = static_cast<double>(encmass_sum);
                         }
-
+                        
+                        // wut is this
                         for(int i=1; i<numbins; i++)
                         {
-                            if(enclosedmass_masses[i] <= enclosedmass_masses[i-1]) enclosedmass_masses[i] = enclosedmass_masses[i-1] + 1.e-10;
+                            if(enclosedmass_masses[i] <= enclosedmass_masses[i-1])
+                                enclosedmass_masses[i] = enclosedmass_masses[i-1] + 1.e-10;
                         }
 
                         // linear interpolation of radius as a function of enclosed mass counts
