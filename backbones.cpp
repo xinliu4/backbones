@@ -322,7 +322,16 @@ int main(int argc, char** argv)
     for(int step_ind=0; step_ind<count_steps; step_ind++)
     {
 
-        //if(1){
+        // JH! the read_condition below is a flag that tells each rank whether or not it should
+        // execute the GIO code below which reads the SO catalog. For now, it's being ignored so 
+        // the code can still function as originally written
+        
+        //read_condition = rank == 0
+        //if(read_condition){ ...
+        
+        // JH! SO catalog reading should be done here for rank 0, result later
+        // scattered to other ranks
+        
         int this_step = catalog_steps[step_ind];
 
         cout << endl << "loading sod properties step " << this_step << endl;
@@ -370,10 +379,45 @@ int main(int argc, char** argv)
         // read the data
         int halos_found = 0;
         cout << "here" << endl;
+
+        // JH! For now, the below loop will work while read_condition=1. Once it is only rank 0
+        // executing this code block, the for loop can be removed, leaving only the readData call
+        // (and the two lines to get and print the size)
         for(int j=0; j<nRanks; ++j) {
             size_t current_size = haloproperties_reader.readNumElems(j);
             cout << "Reading:" << current_size << endl;
             haloproperties_reader.readData(j);
+          
+        // JH!
+        // It is at this point that the redistribution should happen, which should look something
+        // like this:
+        //
+        // -- build chainingMeshIndex object from dtk, initialized with the desired grid topology
+        // -- send the x,y,z halo data to the chainingMesh object, which will place each halo in 
+        //    a mesh cell (the result is an array of cell numbers which is commensurate with the input
+        //    halo properties)
+        // -- sort all of the relevant halo properties (those seen just above in the addVariable calls)
+        //    by the chainingMesh result
+        // -- once the data is sorted, execute an MPI scatterv to send the halo data of each subvolume
+        //    defined by the chainingMesh topology to the corresponding MPI rank
+        // -- an overload step will then be necessary; each rank should send its data (halo properties
+        //    recieved from rank 0) to all of its neighbors using an asynchronous MPI send/recieve pair
+        //    (might be a more flexible way to perform the overloading of an arbitrary size rather than
+        //    resitrciting it to one neighbor, but this should be fine)
+        // -- with that done, continue to build the backbones as normal
+        //
+        // JH!
+        // Note that not everything described above needs to, or should be, done in this location. The 
+        // MPI steps that will allow rank 0 to scatter the data it reads from the catalog should be
+        // implemented in a fork of Dan's chainingMeshIndex code (or perhaps write a new chainingMeshIndex_MPI
+        // function that you can contribute to dtk itself). Likewise for the overloading. In this way, 
+        // the redistribution will remain modular, and Hillary's code can remain concise.
+        //
+        // JH!
+        // Repeat this process for the propertybins below, and then you're done 
+         
+        
+        // JH! Every rank should eventually build these pairs and maps independently for its respective subvolume 
             int nhalos = current_size; 
 
             // loop all halos in this step
@@ -391,10 +435,15 @@ int main(int argc, char** argv)
                 }
             }
         }
-
         haloproperties_reader.close();
 
-
+        
+        // JH! same as above...
+        //if(read_condition){...
+        
+        // JH! SO catalog reading should be done here for rank 0, result later
+        // scattered to other ranks
+        
         // SOD PROPERTY BINS FILES FOR CIRCULAR VELOCITY DEFINITIONS
         pair<int, int64_t> keykey_sod_property_bins;
         map< pair<int, int64_t>, pair<double, double> > backbone_halo_vcirc_map;
@@ -435,6 +484,16 @@ int main(int argc, char** argv)
             size_t current_size = propertybins_reader.readNumElems(j);
             cout << "Reading:" << current_size << endl;
             propertybins_reader.readData(j);
+ 
+
+        // JH! 
+        // Again, MPI communication via a parallelized version of Dan's chainingMeshIndex utility
+        // should be inserted here (if done in a modular way, then should amount to no more than a few 
+        // lines here, while the bulk of the changes will be in the chainingMesh code)
+               
+
+        // JH! Every rank should now compute v_prak independently for its respective subvolume 
+            
             int nhalos = current_size / numbins;
             
             // loop all halos in this step
@@ -568,7 +627,7 @@ int main(int argc, char** argv)
                     }
               }
         }
-	propertybins_reader.close();
+        propertybins_reader.close();
 
         pair<int, int64_t> key_to_search;
         double found_rs_mass;
